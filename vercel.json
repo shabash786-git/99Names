@@ -1,11 +1,11 @@
 {
-  "rewrites": [
-    { "source": "/api/tts", "destination": "/api/tts" }
-  ]
-}
-EOFcat > vercel.json << 'EOF'
-{
-  "rewrites": [
-    { "source": "/api/tts", "destination": "/api/tts" }
+  "version": 2,
+  "builds": [
+    { "src": "index.html", "use": "@vercel/static" },
+    { "src": "api/tts.js", "use": "@vercel/node" }
+  ],
+  "routes": [
+    { "src": "/api/tts", "dest": "/api/tts.js" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }

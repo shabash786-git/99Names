@@ -206,18 +206,6 @@ nav{position:sticky;top:0;z-index:100;background:rgba(10,15,30,.95);backdrop-fil
         <button class="btn" id="daily-mem-btn" onclick="markDailyMemorized()">Mark Memorized</button>
       </div>
     </div>
-    <!-- AUDIO DEBUG PANEL - remove after fixing -->
-    <div id="audio-debug" style="background:#1a2535;border:1px solid #c9a84c;border-radius:12px;padding:16px;margin-bottom:20px;font-size:0.8rem;font-family:monospace">
-      <div style="color:#c9a84c;margin-bottom:10px;font-family:Lato,sans-serif;font-weight:700">🔊 Audio Debug Panel</div>
-      <div id="debug-log" style="line-height:2;color:#a09070">Click a test button...</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-        <button onclick="testDirect()" style="padding:6px 12px;background:#333;color:#eee;border:none;border-radius:6px;cursor:pointer;font-size:0.75rem">Test Direct</button>
-        <button onclick="testProxy1()" style="padding:6px 12px;background:#333;color:#eee;border:none;border-radius:6px;cursor:pointer;font-size:0.75rem">Test corsproxy.io</button>
-        <button onclick="testProxy2()" style="padding:6px 12px;background:#333;color:#eee;border:none;border-radius:6px;cursor:pointer;font-size:0.75rem">Test allorigins</button>
-        <button onclick="testProxy3()" style="padding:6px 12px;background:#333;color:#eee;border:none;border-radius:6px;cursor:pointer;font-size:0.75rem">Test corsproxy.org</button>
-        <button onclick="testFetch()" style="padding:6px 12px;background:#c9a84c;color:#000;border:none;border-radius:6px;cursor:pointer;font-size:0.75rem;font-weight:700">Test Fetch Blob</button>
-      </div>
-    </div>
     <div class="home-cards">
       <div class="home-card" onclick="showPage('browse')"><div class="home-card-icon">📖</div><h3>Browse All</h3><p>Study all 99 names with Arabic, transliteration & meaning.</p></div>
       <div class="home-card" onclick="initFlashcards();showPage('flashcards')"><div class="home-card-icon">🃏</div><h3>Flashcards</h3><p>Flip cards and mark names memorized.</p></div>
@@ -550,8 +538,9 @@ function showPage(name){
 }
 
 // ── AUDIO ──
-// Uses fetch() with multiple CORS proxies as fallbacks
-// Fetches audio as blob — bypasses browser CORS restrictions on Audio()
+// Web Speech API — works on all browsers without any external requests
+// Speaks Arabic if Arabic voice is installed, otherwise speaks transliteration in English
+// To get Arabic voice: Windows Settings > Time & Language > Language > Add Arabic (Saudi Arabia) > install Speech pack
 
 function _getNameForCtx(ctx){
   if(ctx==="daily"&&dailyName) return {name:dailyName, btnId:"daily-audio-btn"};
@@ -566,49 +555,44 @@ function playName(ctx){
   _playArabic(r.name.ar, r.name.tr, r.btnId);
 }
 
-var _currentAudio = null;
+// Pre-load voices as soon as page loads
+var _voices = [];
+function _loadVoices(){
+  _voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+}
+if(window.speechSynthesis){
+  window.speechSynthesis.onvoiceschanged = _loadVoices;
+  _loadVoices();
+}
+
+function _getArabicVoice(){
+  var voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+  return voices.find(function(v){ return v.lang && v.lang.startsWith("ar"); }) || null;
+}
 
 function _playArabic(arabic, translit, btnId){
-  if(_currentAudio){ _currentAudio.pause(); URL.revokeObjectURL(_currentAudio.src); _currentAudio=null; }
+  if(!window.speechSynthesis){ return; }
+  window.speechSynthesis.cancel();
   document.querySelectorAll(".audio-btn").forEach(function(b){b.classList.remove("playing");});
-  var btn=document.getElementById(btnId);
+  var btn = document.getElementById(btnId);
   if(btn) btn.classList.add("playing");
 
-  var googleUrl = "https://translate.google.com/translate_tts?ie=UTF-8&tl=ar&client=tw-ob&q=" + encodeURIComponent(arabic);
-
-  // List of CORS proxies to try in order
-  var proxies = [
-    googleUrl, // direct first (works locally)
-    "https://corsproxy.io/?" + encodeURIComponent(googleUrl),
-    "https://api.allorigins.win/raw?url=" + encodeURIComponent(googleUrl),
-    "https://cors-anywhere.herokuapp.com/" + googleUrl
-  ];
-
-  var proxyIndex = 0;
-
-  function tryNext(){
-    if(proxyIndex >= proxies.length){
-      if(btn) btn.classList.remove("playing");
-      return;
-    }
-    var url = proxies[proxyIndex++];
-    fetch(url, {headers:{"x-requested-with":"XMLHttpRequest"}})
-      .then(function(r){
-        if(!r.ok) throw new Error("HTTP "+r.status);
-        return r.blob();
-      })
-      .then(function(blob){
-        var objUrl = URL.createObjectURL(blob);
-        var a = new Audio(objUrl);
-        _currentAudio = a;
-        a.onended = function(){ if(btn)btn.classList.remove("playing"); URL.revokeObjectURL(objUrl); _currentAudio=null; };
-        a.onerror = function(){ URL.revokeObjectURL(objUrl); _currentAudio=null; tryNext(); };
-        a.play().catch(function(){ URL.revokeObjectURL(objUrl); _currentAudio=null; tryNext(); });
-      })
-      .catch(function(){ tryNext(); });
+  var arVoice = _getArabicVoice();
+  // If Arabic voice available use Arabic text, else use transliteration in English
+  var text = arVoice ? arabic : translit;
+  var utt = new SpeechSynthesisUtterance(text);
+  if(arVoice){
+    utt.voice = arVoice;
+    utt.lang = "ar-SA";
+    utt.rate = 0.8;
+  } else {
+    utt.lang = "en-US";
+    utt.rate = 0.7;
+    utt.pitch = 1.0;
   }
-
-  tryNext();
+  utt.onend = function(){ if(btn) btn.classList.remove("playing"); };
+  utt.onerror = function(){ if(btn) btn.classList.remove("playing"); };
+  window.speechSynthesis.speak(utt);
 }
 
 // ── DAILY NAME ──
@@ -936,59 +920,6 @@ function renderStats(){
     var d=new Date(h.date).toLocaleDateString();
     return'<div class="history-item"><span>'+d+" · "+modeLabel(h.mode)+'</span><span class="history-score '+cls+'">'+h.score+"/"+h.total+" ("+pct+"%)</span></div>";
   }).join("");
-}
-
-// ── DEBUG ──
-function dblog(msg, color){ 
-  var el = document.getElementById('debug-log');
-  if(el) el.innerHTML += '<br><span style="color:'+(color||'#a09070')+'">'+msg+'</span>';
-}
-var _testArabic = 'الرَّحْمَٰنُ';
-var _testUrl = 'https://translate.google.com/translate_tts?ie=UTF-8&tl=ar&client=tw-ob&q='+encodeURIComponent(_testArabic);
-
-function testAudio(url, label){
-  dblog('Testing '+label+'...','#c9a84c');
-  var a = new Audio(url);
-  a.oncanplay = function(){ dblog(label+': LOADED ✓','#4ade80'); };
-  a.onended = function(){ dblog(label+': PLAYED SUCCESSFULLY ✓✓','#4ade80'); };
-  a.onerror = function(){ dblog(label+': ERROR code='+(a.error?a.error.code:'?'),'#f87171'); };
-  a.play().then(function(){ dblog(label+': play() resolved ✓','#4ade80'); })
-          .catch(function(e){ dblog(label+': play() rejected: '+e.message,'#f87171'); });
-}
-
-function testDirect(){ testAudio(_testUrl, 'Direct Google TTS'); }
-function testProxy1(){ testAudio('https://corsproxy.io/?'+encodeURIComponent(_testUrl), 'corsproxy.io'); }
-function testProxy2(){ testAudio('https://api.allorigins.win/raw?url='+encodeURIComponent(_testUrl), 'allorigins'); }
-function testProxy3(){ testAudio('https://www.corsproxy.org/?'+encodeURIComponent(_testUrl), 'corsproxy.org'); }
-
-function testFetch(){
-  dblog('Testing fetch blob...','#c9a84c');
-  var proxies = [
-    'https://corsproxy.io/?'+encodeURIComponent(_testUrl),
-    'https://api.allorigins.win/raw?url='+encodeURIComponent(_testUrl),
-    'https://www.corsproxy.org/?'+encodeURIComponent(_testUrl)
-  ];
-  var i = 0;
-  function next(){
-    if(i>=proxies.length){ dblog('All fetch proxies failed','#f87171'); return; }
-    var url = proxies[i++];
-    dblog('Fetch trying: '+url.substring(0,40)+'...','#a09070');
-    fetch(url)
-      .then(function(r){ 
-        if(!r.ok) throw new Error('HTTP '+r.status);
-        return r.blob(); 
-      })
-      .then(function(blob){
-        dblog('Fetch got blob: '+blob.size+' bytes','#4ade80');
-        var objUrl = URL.createObjectURL(blob);
-        var a = new Audio(objUrl);
-        a.onended = function(){ dblog('AUDIO PLAYED! Use this proxy ✓✓','#4ade80'); URL.revokeObjectURL(objUrl); };
-        a.onerror = function(){ dblog('Blob play error','#f87171'); next(); };
-        a.play().catch(function(e){ dblog('Blob play() rejected: '+e.message,'#f87171'); next(); });
-      })
-      .catch(function(e){ dblog('Fetch error: '+e.message,'#f87171'); next(); });
-  }
-  next();
 }
 
 // ── INIT ──
